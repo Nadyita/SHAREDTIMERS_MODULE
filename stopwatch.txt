@@ -1,0 +1,8 @@
+To start the stopwatch:
+<highlight><tab><symbol>stopwatch start<end>
+
+To stop the stopwatch and show the time elapsed:
+<highlight><tab><symbol>stopwatch stop<end>
+
+To view the current time elapsed without stopping the stopwatch:
+<highlight><tab><symbol>stopwatch view<end>
