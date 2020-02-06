@@ -15,13 +15,13 @@ use Budabot\Core\Registry;
  * Commands this class contains:
  *	@DefineCommand(
  *		command     = 'rtimer',
- *		accessLevel = 'guild',
+ *		accessLevel = 'member',
  *		description = 'Adds a repeating timer',
  *		help        = 'timers.txt'
  *	)
  *	@DefineCommand(
  *		command     = 'timers',
- *		accessLevel = 'guild',
+ *		accessLevel = 'member',
  *		description = 'Sets and shows timers',
  *		help        = 'timers.txt',
  *		alias       = 'timer'
