@@ -207,17 +207,21 @@ class TimerController {
 
 	public function sendAlertMessage($timer, $alert) {
 		$msg = $alert->message;
-		$mode = $timer->mode;
-		if (!is_array($mode)) {
-			$mode = array($mode);
+		$mode = explode(",", $timer->mode);
+		if ($this->settingManager->get('guest_relay') == 1 && $this->settingManager->get("guest_relay_commands") == 1) {
+			if (in_array("priv", $mode) && !in_array("guild", $mode) && $this->settingManager->get('guild_channel_status') == 1) {
+				$mode []= "guild";
+			} elseif (in_array("guild", $mode) && !in_array("priv", $mode)) {
+				$mode []= "priv";
+			}
 		}
 		$sent = false;
 		foreach ($mode as $sendMode) {
 			if ('priv' == $sendMode) {
-				$this->chatBot->sendPrivate($msg);
+				$this->chatBot->sendPrivate($msg, true);
 				$sent = true;
 			} elseif ('guild' == $sendMode) {
-				$this->chatBot->sendGuild($msg);
+				$this->chatBot->sendGuild($msg, true);
 				$sent = true;
 			} elseif ('discord' == $sendMode) {
 				$this->discordController->sendMessage($msg);
