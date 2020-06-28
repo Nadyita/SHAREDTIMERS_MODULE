@@ -35,28 +35,58 @@ class TimerController {
 	 */
 	public $moduleName;
 
-	/** @Inject */
+	/**
+	 * @var \Budabot\Core\DB $db
+	 * @Inject
+	 */
 	public $db;
 
-	/** @Inject */
+	/**
+	 * @var \Budabot\Core\Budabot $chatBot
+	 * @Inject
+	 */
 	public $chatBot;
 
-	/** @Inject */
+	/**
+	 * @var \Budabot\Core\AccessManager $accessManager
+	 * @Inject
+	 */
 	public $accessManager;
 
-	/** @Inject */
+	/**
+	 * @var \Budabot\Core\Text $text
+	 * @Inject
+	 */
 	public $text;
 
-	/** @Inject */
+	/**
+	 * @var \Budabot\Core\Util $util
+	 * @Inject
+	 */
 	public $util;
 
-	/** @Inject */
+	/**
+	 * @var \Budabot\Core\Modules\DiscordController $discordController
+	 * @Inject
+	 */
+	public $discordController;
+	
+	/**
+	 * @var \Budabot\Core\SettingManager $settingManager
+	 * @Inject
+	 */
 	public $settingManager;
-
-	/** @Inject */
+	
+	/**
+	 * @var \Budabot\Core\SettingObject $setting
+	 * @Inject
+	 */
 	public $setting;
-
-	/** @Logger */
+	
+	/**
+	 * @var \Budabot\Core\LoggerWrapper $logger
+	 * @Logger
+	 */
 	public $logger;
 
 	private $timers = array();
@@ -68,8 +98,22 @@ class TimerController {
 		$this->db->loadSQLFile($this->moduleName, 'timers');
 		$this->loadFromDB();
 
-		$this->settingManager->add($this->moduleName, 'timer_alert_times', 'Times to display timer alerts', 'edit', 'text', '1h 15m 1m', '1h 15m 1m', '', 'mod', 'timer_alert_times.txt');
-		$this->settingManager->registerChangeListener('timer_alert_times', array($this, 'changeTimerAlertTimes'));
+		$this->settingManager->add(
+			$this->moduleName,
+			'timer_alert_times',
+			'Times to display timer alerts',
+			'edit',
+			'text',
+			'1h 15m 1m',
+			'1h 15m 1m',
+			'',
+			'mod',
+			'timer_alert_times.txt'
+		);
+		$this->settingManager->registerChangeListener(
+			'timer_alert_times',
+			array($this, 'changeTimerAlertTimes')
+		);
 	}
 
 	/**
@@ -94,7 +138,7 @@ class TimerController {
 	public function changeTimerAlertTimes($settingName, $oldValue, $newValue, $data)  {
 		$alertTimes = array_reverse(explode(' ', $newValue));
 		$oldTime = 0;
-		forEach ($alertTimes as $alertTime) {
+		foreach ($alertTimes as $alertTime) {
 			$time = $this->util->parseTime($alertTime);
 			if ($time == 0) {
 				// invalid time
@@ -164,11 +208,23 @@ class TimerController {
 	public function sendAlertMessage($timer, $alert) {
 		$msg = $alert->message;
 		$mode = $timer->mode;
-		if ('priv' == $mode) {
-			$this->chatBot->sendPrivate($msg, true);
-		} else if ('guild' == $mode) {
-			$this->chatBot->sendGuild($msg, true);
-		} else {
+		if (!is_array($mode)) {
+			$mode = array($mode);
+		}
+		$sent = false;
+		foreach ($mode as $sendMode) {
+			if ('priv' == $sendMode) {
+				$this->chatBot->sendPrivate($msg);
+				$sent = true;
+			} elseif ('guild' == $sendMode) {
+				$this->chatBot->sendGuild($msg);
+				$sent = true;
+			} elseif ('discord' == $sendMode) {
+				$this->discordController->sendMessage($msg);
+				$sent = true;
+			}
+		}
+		if ($sent === false) {
 			$this->chatBot->sendTell($msg, $timer->owner);
 		}
 	}
