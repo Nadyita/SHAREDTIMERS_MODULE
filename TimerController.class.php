@@ -121,9 +121,16 @@ class TimerController {
 	 * @Description("Periodically reloads timers from database")
 	 */
 	public function loadFromDB() {
+		$oldTimers = $this->timers;
 		$this->timers = array();
 		$data = $this->db->query("SELECT * FROM timers");
-		forEach ($data as $row) {
+		foreach ($data as $row) {
+			$key = strtolower($row->name);
+			// Keep timers that didn't change to keep alerts
+			if (array_key_exists($key, $oldTimers) && $oldTimers[$key]->settime == $row->settime) {
+				$this->timers[$key] = $oldTimers[$key];
+				continue;
+			}
 			$row->alerts = json_decode($row->alerts);
 			// remove alerts that have already passed
 			// leave 1 alert so that owner can be notified of timer finishing
@@ -135,7 +142,7 @@ class TimerController {
 		}
 	}
 
-	public function changeTimerAlertTimes($settingName, $oldValue, $newValue, $data)  {
+	public function changeTimerAlertTimes($settingName, $oldValue, $newValue, $data) {
 		$alertTimes = array_reverse(explode(' ', $newValue));
 		$oldTime = 0;
 		foreach ($alertTimes as $alertTime) {
@@ -143,7 +150,7 @@ class TimerController {
 			if ($time == 0) {
 				// invalid time
 				throw new Exception("Error saving setting: invalid alert time('$alertTime'). For more info type !help timer_alert_times.");
-			} else if ($time <= $oldTime) {
+			} elseif ($time <= $oldTime) {
 				// invalid alert order
 				throw new Exception("Error saving setting: invalid alert order('$alertTime'). For more info type !help timer_alert_times.");
 			}
@@ -156,20 +163,16 @@ class TimerController {
 	 * @Description("Checks timers and periodically updates chat with time left")
 	 */
 	public function checkTimers() {
-		//Check if at least one timer is running
-		if (count($this->timers) == 0) {
-			return;
-		}
-
 		$time = time();
 
-		forEach ($this->timers as $timer) {
-			if (count($timer->alerts) == 0) {
+		foreach ($this->timers as $timer) {
+			// Remove timers only from the database after every bot had the chance to fire it
+			if (count($timer->alerts) == 0 && ($time -10 > $timer->endtime)) {
 				$this->remove($timer->name);
 				continue;
 			}
 
-			forEach($timer->alerts as $alert) {
+			foreach ($timer->alerts as $alert) {
 				if ($alert->time > $time) {
 					break;
 				}
@@ -306,7 +309,7 @@ class TimerController {
 		$timer = $this->get($name);
 		if ($timer == null) {
 			$msg = "Could not find a timer named <highlight>$name<end>.";
-		} else if ($timer->owner != $sender && !$this->accessManager->checkAccess($sender, "mod")) {
+		} elseif ($timer->owner != $sender && !$this->accessManager->checkAccess($sender, "mod")) {
 			$msg = "You must own this timer or have moderator access in order to remove it.";
 		} else {
 			$this->remove($name);
@@ -345,6 +348,10 @@ class TimerController {
 	 */
 	public function timersListCommand($message, $channel, $sender, $sendto, $args) {
 		$timers = $this->getAllTimers();
+		// Ignore timers set by modules, like city raid, Vizaresh, etc.
+		$timers = array_filter($timers, function($timer) {
+			return $timer->owner !== $this->chatBot->vars['name'];
+		});
 		$count = count($timers);
 		if ($count == 0) {
 			$msg = "No timers currently running.";
@@ -360,7 +367,7 @@ class TimerController {
 							: 0
 					);
 			});
-			forEach ($timers as $timer) {
+			foreach ($timers as $timer) {
 				$time_left = $this->util->unixtimeToReadable($timer->endtime - time());
 				$name = $timer->name;
 				$owner = $timer->owner;
@@ -385,7 +392,7 @@ class TimerController {
 	public function generateAlerts($sender, $name, $endTime, $alertTimes) {
 		$alerts = array();
 
-		forEach ($alertTimes as $alertTime) {
+		foreach ($alertTimes as $alertTime) {
 			$time = $this->util->parseTime($alertTime);
 			$timeString = $this->util->unixtimeToReadable($time);
 			if ($endTime - $time > time()) {
@@ -410,7 +417,7 @@ class TimerController {
 		return $alerts;
 	}
 
-	public function addTimer($sender, $name, $runTime, $channel, $alerts = null) {
+	public function addTimer($sender, $name, $runTime, $channel, $alerts=null) {
 		if ($name == '') {
 			return;
 		}
@@ -439,7 +446,7 @@ class TimerController {
 		return "Timer <highlight>$name<end> has been set for $timerset.";
 	}
 
-	public function add($name, $owner, $mode, $alerts, $callback, $data = null) {
+	public function add($name, $owner, $mode, $alerts, $callback, $data=null) {
 		usort($alerts, function($a, $b) {
 			return $a->time - $b->time;
 		});
