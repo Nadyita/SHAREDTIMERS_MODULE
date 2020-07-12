@@ -479,13 +479,11 @@ class TimerController {
 	}
 
 	public function getAllTimers() {
-		return array_values(
-			array_filter(
-				$this->timers,
-				function($timer) {
-					return $timer->endtime >= time();
-				}
-			)
+		return array_filter(
+			$this->timers,
+			function($timer) {
+				return $timer->endtime >= time();
+			}
 		);
 	}
 }
