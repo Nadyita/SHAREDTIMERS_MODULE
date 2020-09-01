@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS `timers_<myname>` (
+CREATE TABLE IF NOT EXISTS `timers` (
 	`name` VARCHAR(255),
 	`owner` VARCHAR(25),
 	`mode` VARCHAR(50),
