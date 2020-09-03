@@ -73,16 +73,13 @@ class TimerController {
 	/** @Logger */
 	public LoggerWrapper $logger;
 
-	/** @var Timer[] */
-	private $timers = [];
+	/** @var array<string,Timer> */
+	private array $timers = [];
 
-	/**
-	 * @Setup
-	 */
+	/** @Setup */
 	public function setup(): void {
 		$this->db->loadSQLFile($this->moduleName, 'timers');
 		$this->loadFromDB();
-
 
 		$this->settingManager->add(
 			$this->moduleName,
@@ -107,6 +104,7 @@ class TimerController {
 	 * @Description("Periodically reloads timers from database")
 	 */
 	public function loadFromDB(): void {
+		$oldTimers = $this->timers;
 		$this->timers = [];
 		/** @var Timer[] */
 		$data = $this->db->fetchAll(
@@ -114,6 +112,12 @@ class TimerController {
 			"SELECT name, owner, mode, endtime, settime, callback, data, alerts AS alerts_raw FROM timers"
 		);
 		foreach ($data as $row) {
+			$key = strtolower($row->name);
+			// Keep timers that didn't change to keep alerts
+			if (isset($oldTimers[$key]) && $oldTimers[$key]->settime == $row->settime) {
+				$this->timers[$key] = $oldTimers[$key];
+				continue;
+			}
 			$alertsData = json_decode($row->alerts_raw);
 			foreach ($alertsData as $alertData) {
 				$alert = new Alert();
@@ -129,7 +133,7 @@ class TimerController {
 				array_shift($row->alerts);
 			}
 
-			$this->timers[strtolower($row->name)] = $row;
+			$this->timers[$key] = $row;
 		}
 	}
 
