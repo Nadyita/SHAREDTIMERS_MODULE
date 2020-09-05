@@ -112,10 +112,10 @@ class TimerController {
 			"SELECT name, owner, mode, endtime, settime, callback, data, alerts AS alerts_raw FROM timers"
 		);
 		foreach ($data as $row) {
-			$key = strtolower($row->name);
+			$timerKey = strtolower($row->name);
 			// Keep timers that didn't change to keep alerts
-			if (isset($oldTimers[$key]) && $oldTimers[$key]->settime == $row->settime) {
-				$this->timers[$key] = $oldTimers[$key];
+			if (isset($oldTimers[$timerKey]) && $oldTimers[$timerKey]->settime == $row->settime) {
+				$this->timers[$timerKey] = $oldTimers[$timerKey];
 				continue;
 			}
 			$alertsData = json_decode($row->alerts_raw);
@@ -133,7 +133,7 @@ class TimerController {
 				array_shift($row->alerts);
 			}
 
-			$this->timers[$key] = $row;
+			$this->timers[$timerKey] = $row;
 		}
 	}
 
@@ -476,7 +476,8 @@ class TimerController {
 	}
 
 	public function get($name): ?Timer {
-		return $this->timers[strtolower($name)] ?? null;
+		$timers = $this->getAllTimers();
+		return $timers[strtolower($name)] ?? null;
 	}
 
 	/**
