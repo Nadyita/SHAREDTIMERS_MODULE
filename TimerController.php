@@ -476,8 +476,7 @@ class TimerController {
 	}
 
 	public function get($name): ?Timer {
-		$timers = $this->getAllTimers();
-		return $timers[strtolower($name)];
+		return $this->timers[strtolower($name)] ?? null;
 	}
 
 	/**
