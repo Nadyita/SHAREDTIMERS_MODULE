@@ -1,29 +1,16 @@
 <?php declare(strict_types=1);
 
-namespace Nadybot\Modules\TIMERS_MODULE;
+namespace Nadybot\User\Modules\SHAREDTIMERS_MODULE;
 
 use Exception;
-use Nadybot\Core\{
-	AccessManager,
-	CommandReply,
-	DB,
-	LoggerWrapper,
-	Nadybot,
-	Registry,
-	SettingManager,
-	SettingObject,
-	SQLException,
-	Text,
-	Util,
-	Modules\DISCORD\DiscordController,
-};
+use Nadybot\Core\Registry;
+use Nadybot\Modules\TIMERS_MODULE\TimerController;
 
 /**
- * @author Tyrence (RK2)
+ * @author Nadyita (RK5)
  *
- * @Instance
+ * @Instance(overwrite=true, value="timercontroller")
  *
- * Commands this class contains:
  *	@DefineCommand(
  *		command     = 'rtimer',
  *		accessLevel = 'guild',
@@ -38,75 +25,14 @@ use Nadybot\Core\{
  *		alias       = 'timer'
  *	)
  */
-class TimerController {
-
-	/**
-	 * Name of the module.
-	 * Set automatically by module loader.
-	 */
-	public string $moduleName;
-
-	/** @Inject */
-	public DB $db;
-
-	/** @Inject */
-	public Nadybot $chatBot;
-
-	/** @Inject */
-	public AccessManager $accessManager;
-
-	/** @Inject */
-	public Text $text;
-
-	/** @Inject */
-	public Util $util;
-
-	/** @Inject */
-	public DiscordController $discordController;
-	
-	/** @Inject */
-	public SettingManager $settingManager;
-	
-	/** @Inject */
-	public SettingObject $setting;
-	
-	/** @Logger */
-	public LoggerWrapper $logger;
-
-	/** @var array<string,Timer> */
-	private array $timers = [];
+class SharedTimerController extends TimerController {
+	public const DB_TABLE = "timers";
 
 	/** @Setup */
 	public function setup(): void {
-		$this->db->loadSQLFile($this->moduleName, 'timers');
+		$this->db->loadMigrations($this->moduleName, __DIR__ . "/Migrations");
+		parent::setup();
 		$this->loadFromDB();
-
-		$this->settingManager->add(
-			$this->moduleName,
-			'timer_alert_times',
-			'Times to display timer alerts',
-			'edit',
-			'text',
-			'1h 15m 1m',
-			'1h 15m 1m',
-			'',
-			'mod',
-			'timer_alert_times.txt'
-		);
-		$this->settingManager->add(
-			$this->moduleName,
-			'timer_alert_location',
-			'Where to display timer alerts',
-			'edit',
-			"options",
-			"0",
-			"Source only;Source+Priv;Source+Guild;Source+Priv+Guild;Source+Discord;Source+Discord+Priv;Source+Discord+Guild;Source+Discord+Priv+Guild",
-			"0;1;2;3;4;5;6;7"
-		);
-		$this->settingManager->registerChangeListener(
-			'timer_alert_times',
-			[$this, 'changeTimerAlertTimes']
-		);
 	}
 
 	/**
@@ -116,25 +42,13 @@ class TimerController {
 	public function loadFromDB(): void {
 		$oldTimers = $this->timers;
 		$this->timers = [];
-		/** @var Timer[] */
-		$data = $this->db->fetchAll(
-			Timer::class,
-			"SELECT name, owner, mode, endtime, settime, callback, data, alerts AS alerts_raw FROM timers"
-		);
+		$data = $this->readAllTimers();
 		foreach ($data as $row) {
 			$timerKey = strtolower($row->name);
 			// Keep timers that didn't change to keep alerts
 			if (isset($oldTimers[$timerKey]) && $oldTimers[$timerKey]->settime == $row->settime) {
 				$this->timers[$timerKey] = $oldTimers[$timerKey];
 				continue;
-			}
-			$alertsData = json_decode($row->alerts_raw);
-			foreach ($alertsData as $alertData) {
-				$alert = new Alert();
-				foreach ($alertData as $key => $value) {
-					$alert->{$key} = $value;
-				}
-				$row->alerts []= $alert;
 			}
 
 			// remove alerts that have already passed
@@ -144,22 +58,6 @@ class TimerController {
 			}
 
 			$this->timers[$timerKey] = $row;
-		}
-	}
-
-	public function changeTimerAlertTimes(string $settingName, string $oldValue, $newValue, $data): void {
-		$alertTimes = array_reverse(explode(' ', $newValue));
-		$oldTime = 0;
-		foreach ($alertTimes as $alertTime) {
-			$time = $this->util->parseTime($alertTime);
-			if ($time === 0) {
-				// invalid time
-				throw new Exception("Error saving setting: invalid alert time('$alertTime'). For more info type !help timer_alert_times.");
-			} elseif ($time <= $oldTime) {
-				// invalid alert order
-				throw new Exception("Error saving setting: invalid alert order('$alertTime'). For more info type !help timer_alert_times.");
-			}
-			$oldTime = $time;
 		}
 	}
 
@@ -197,346 +95,5 @@ class TimerController {
 				}
 			}
 		}
-	}
-
-	public function timerCallback(Timer $timer, Alert $alert): void {
-		$this->sendAlertMessage($timer, $alert);
-	}
-
-	public function repeatingTimerCallback(Timer $timer, Alert $alert): void {
-		$this->sendAlertMessage($timer, $alert);
-
-		if (count($timer->alerts) !== 0) {
-			return;
-		}
-		$endTime = (int)$timer->data + $alert->time;
-		$alerts = $this->generateAlerts($timer->owner, $timer->name, $endTime, explode(' ', $this->setting->timer_alert_times));
-		$this->add($timer->name, $timer->owner, $timer->mode, $alerts, $timer->callback, $timer->data);
-	}
-
-	public function sendAlertMessage(Timer $timer, Alert $alert): void {
-		$msg = $alert->message;
-		$mode = explode(",", $timer->mode);
-		$sent = false;
-		foreach ($mode as $sendMode) {
-			if ($sendMode === "priv") {
-				$this->chatBot->sendPrivate($msg, true);
-				$sent = true;
-			} elseif (in_array($sendMode, ["org", "guild"], true)) {
-				$this->chatBot->sendGuild($msg, true);
-				$sent = true;
-			} elseif ($sendMode === "discord") {
-				$this->discordController->sendDiscord($msg);
-				$sent = true;
-			}
-		}
-		if ($sent === false) {
-			$this->chatBot->sendTell($msg, $timer->owner);
-		}
-	}
-
-	/**
-	 * This command handler adds a repeating timer.
-	 *
-	 * @HandlesCommand("rtimer")
-	 * @Matches("/^(rtimer add|rtimer) ([a-z0-9]+) ([a-z0-9]+) (.+)$/i")
-	 */
-	public function rtimerCommand(string $message, string $channel, string $sender, CommandReply $sendto, array $args): void {
-		$initialTimeString = $args[2];
-		$timeString = $args[3];
-		$timerName = $args[4];
-
-		$timerName = preg_replace("/^\+discord\s*/i", "", $timerName, -1, $addDiscord);
-		if ($addDiscord > 0) {
-			$alertChannel = $this->getTimerAlertChannel($channel, "discord");
-			if (empty($timerName)) {
-				$timerName = $sender;
-			}
-		} else {
-			$alertChannel = $this->getTimerAlertChannel($channel);
-		}
-
-
-		$timer = $this->get($timerName);
-		if ($timer !== null) {
-			$msg = "A timer with the name <highlight>$timerName<end> is already running.";
-			$sendto->reply($msg);
-			return;
-		}
-
-		$initialRunTime = $this->util->parseTime($initialTimeString);
-		$runTime = $this->util->parseTime($timeString);
-
-		if ($runTime < 1) {
-			$msg = "You must enter a valid time parameter for the run time.";
-			$sendto->reply($msg);
-			return;
-		}
-
-		if ($initialRunTime < 1) {
-			$msg = "You must enter a valid time parameter for the initial run time.";
-			$sendto->reply($msg);
-			return;
-		}
-
-		$endTime = time() + $initialRunTime;
-		
-		$alerts = $this->generateAlerts($sender, $timerName, $endTime, explode(' ', $this->setting->timer_alert_times));
-
-		$this->add($timerName, $sender, $alertChannel, $alerts, "timercontroller.repeatingTimerCallback", (string)$runTime);
-
-		$initialTimerSet = $this->util->unixtimeToReadable($initialRunTime);
-		$timerSet = $this->util->unixtimeToReadable($runTime);
-		$msg = "Repeating timer <highlight>$timerName<end> will go off in $initialTimerSet and repeat every $timerSet.";
-
-		$sendto->reply($msg);
-	}
-	
-	/**
-	 * @HandlesCommand("timers")
-	 * @Matches("/^timers view (.+)$/i")
-	 */
-	public function timersViewCommand(string $message, string $channel, string $sender, CommandReply $sendto, array $args): void {
-		$name = strtolower($args[1]);
-		$timer = $this->get($name);
-		if ($timer === null) {
-			$msg = "Could not find timer named <highlight>$name<end>.";
-			$sendto->reply($msg);
-			return;
-		}
-		$time_left = $this->util->unixtimeToReadable($timer->endtime - time());
-		$name = $timer->name;
-
-		$msg = "Timer <highlight>$name<end> has <highlight>$time_left<end> left.";
-		$sendto->reply($msg);
-	}
-
-	/**
-	 * @HandlesCommand("timers")
-	 * @Matches("/^timers (rem|del) (.+)$/i")
-	 */
-	public function timersRemoveCommand(string $message, string $channel, string $sender, CommandReply $sendto, array $args): void {
-		$name = strtolower($args[2]);
-		$timer = $this->get($name);
-		if ($timer === null) {
-			$msg = "Could not find a timer named <highlight>$name<end>.";
-		} elseif ($timer->owner !== $sender && !$this->accessManager->checkAccess($sender, "mod")) {
-			$msg = "You must own this timer or have moderator access in order to remove it.";
-		} else {
-			$this->remove($name);
-			$msg = "Removed timer <highlight>$timer->name<end>.";
-		}
-		$sendto->reply($msg);
-	}
-
-	protected function getTimerAlertChannel(string ...$channels): string {
-		// Timers via tell always create tell alerts only
-		if ($channels === ["msg"]) {
-			return "msg";
-		}
-		$location = $this->settingManager->getInt('timer_alert_location');
-		if ($location & 1) {
-			$channels []= "priv";
-		}
-		if ($location & 2) {
-			$channels []= "guild";
-		}
-		if ($location & 4) {
-			$channels []= "discord";
-		}
-		return join(",", array_values(array_unique($channels)));
-	}
-	
-	/**
-	 * @HandlesCommand("timers")
-	 * @Matches("/^(timers add|timers) ([a-z0-9]+)$/i")
-	 * @Matches("/^(timers add|timers) ([a-z0-9]+) (.+)$/i")
-	 */
-	public function timersAddCommand(string $message, string $channel, string $sender, CommandReply $sendto, array $args): void {
-		$timeString = $args[2];
-		$name = $sender;
-		if (count($args) > 3) {
-			$name = $args[3];
-		}
-		
-		if (preg_match("/^\\d+$/", $timeString)) {
-			$runTime = $args[2] * 60;
-		} else {
-			$runTime = $this->util->parseTime($timeString);
-		}
-		$name = preg_replace("/^\+discord\s*/i", "", $name, -1, $addDiscord);
-		if ($addDiscord > 0) {
-			$alertChannel = $this->getTimerAlertChannel($channel, "discord");
-			if (empty($name)) {
-				$name = $sender;
-			}
-		} else {
-			$alertChannel = $this->getTimerAlertChannel($channel);
-		}
-
-		$msg = $this->addTimer($sender, $name, $runTime, $alertChannel);
-		$sendto->reply($msg);
-	}
-
-	/**
-	 * @HandlesCommand("timers")
-	 * @Matches("/^timers$/i")
-	 */
-	public function timersListCommand(string $message, string $channel, string $sender, CommandReply $sendto, array $args): void {
-		$timers = $this->getAllTimers();
-		$count = count($timers);
-		if ($count === 0) {
-			$msg = "No timers currently running.";
-			$sendto->reply($msg);
-			return;
-		}
-		$blob = '';
-		// Sort timers by time until going off
-		usort($timers, function(Timer $a, Timer $b) {
-			return $a->endtime <=> $b->endtime;
-		});
-		foreach ($timers as $timer) {
-			$time_left = $this->util->unixtimeToReadable($timer->endtime - time());
-			$name = $timer->name;
-			$owner = $timer->owner;
-
-			$remove_link = $this->text->makeChatcmd("Remove", "/tell <myname> timers rem $name");
-
-			$repeatingInfo = '';
-			if ($timer->callback === 'timercontroller.repeatingTimerCallback') {
-				$repeatingTimeString = $this->util->unixtimeToReadable((int)$timer->data);
-				$repeatingInfo = " (Repeats every $repeatingTimeString)";
-			}
-
-			$blob .= "Name: <highlight>$name<end> {$remove_link}\n";
-			$blob .= "Time left: <highlight>$time_left<end> $repeatingInfo\n";
-			$blob .= "Set by: <highlight>$owner<end>\n\n";
-		}
-		$msg = $this->text->makeBlob("Timers ($count)", $blob);
-		$sendto->reply($msg);
-	}
-	
-	/**
-	 * Generate alerts out of an alert specification
-	 *
-	 * @param string $sender Name of the player
-	 * @param string $name Name ofthe alert
-	 * @param int $endTime When to trigger the timer
-	 * @param string[] $alertTimes A list og alert times (human readable)
-	 * @return Alert[]
-	 */
-	public function generateAlerts(string $sender, string $name, int $endTime, array $alertTimes): array {
-		$alerts = [];
-		
-		foreach ($alertTimes as $alertTime) {
-			$time = $this->util->parseTime($alertTime);
-			$timeString = $this->util->unixtimeToReadable($time);
-			if ($endTime - $time > time()) {
-				$alert = new Alert();
-				$alert->message = "Reminder: Timer <highlight>$name<end> has <highlight>$timeString<end> left. [set by <highlight>$sender<end>]";
-				$alert->time = $endTime - $time;
-				$alerts []= $alert;
-			}
-		}
-		
-		if ($endTime > time()) {
-			$alert = new Alert;
-			if ($name === $sender) {
-				$alert->message = "<highlight>$sender<end>, your timer has gone off.";
-			} else {
-				$alert->message = "<highlight>$sender<end>, your timer named <highlight>$name<end> has gone off.";
-			}
-			$alert->time = $endTime;
-			$alerts []= $alert;
-		}
-		
-		return $alerts;
-	}
-
-	/**
-	 * Add a timer
-	 *
-	 * @param string $sender Name of the creator
-	 * @param string $name Name of the timer
-	 * @param int $runTime When to trigger
-	 * @param string $channel Where to show (comma-separated)
-	 * @param Alert[]|null $alerts List of alert when to display things
-	 * @return string Message to display
-	 * @throws SQLException
-	 */
-	public function addTimer(string $sender, string $name, int $runTime, string $channel, ?array $alerts=null): string {
-		if ($name === '') {
-			return '';
-		}
-
-		if ($this->get($name) !== null) {
-			return "A timer named <highlight>$name<end> is already running.";
-		}
-
-		if ($runTime < 1) {
-			return "You must enter a valid time parameter.";
-		}
-		
-		if (strlen($name) > 255) {
-			return "You cannot use timer names longer than 255 characters.";
-		}
-
-		$endTime = time() + $runTime;
-		
-		if ($alerts === null) {
-			$alerts = $this->generateAlerts($sender, $name, $endTime, explode(' ', $this->setting->timer_alert_times));
-		}
-
-		$this->add($name, $sender, $channel, $alerts, 'timercontroller.timerCallback');
-
-		$timerset = $this->util->unixtimeToReadable($runTime);
-		return "Timer <highlight>$name<end> has been set for <highlight>$timerset<end>.";
-	}
-
-	/**
-	 * @param Alert[] $alerts
-	 */
-	public function add(string $name, string $owner, string $mode, array $alerts, string $callback, string $data=null): void {
-		usort($alerts, function(Alert $a, Alert $b) {
-			return $a->time <=> $b->time;
-		});
-
-		$timer = new Timer();
-		$timer->name = $name;
-		$timer->owner = $owner;
-		$timer->mode = $mode;
-		$timer->endtime = end($alerts)->time;
-		$timer->settime = time();
-		$timer->callback = $callback;
-		$timer->data = $data;
-		$timer->alerts = $alerts;
-
-		$this->timers[strtolower($name)] = $timer;
-
-		$sql = "INSERT INTO timers (`name`, `owner`, `mode`, `endtime`, `settime`, `callback`, `data`, alerts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-		$this->db->exec("DELETE FROM timers WHERE `name` LIKE ?", $name);
-		$this->db->exec($sql, $name, $owner, $mode, $timer->endtime, $timer->settime, $callback, $data, json_encode($alerts));
-	}
-
-	public function remove(string $name): void {
-		$this->db->exec("DELETE FROM timers WHERE `name` LIKE ?", $name);
-		unset($this->timers[strtolower($name)]);
-	}
-
-	public function get($name): ?Timer {
-		$timers = $this->getAllTimers();
-		return $timers[strtolower($name)] ?? null;
-	}
-
-	/**
-	 * @return Timer[]
-	 */
-	public function getAllTimers(): array {
-		return array_filter(
-			$this->timers,
-			function($timer) {
-				return $timer->endtime >= time();
-			}
-		);
 	}
 }
